@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import Tracker from './components/Tracker';
@@ -358,10 +359,10 @@ const App: React.FC = () => {
   const handleLogout = async () => { 
       if (auth) { 
           await signOut(auth);
-          // CRITICAL FIX: Clear localStorage choice to force Onboarding screen on next load/refresh
           localStorage.removeItem(KEY_MODE_CHOSEN);
           setHasChosenMode(false);
-          setActiveTab('dashboard'); 
+          setUser(null);
+          setActiveTab('dashboard');
       } 
   };
 
@@ -432,6 +433,170 @@ const App: React.FC = () => {
         } catch (err) { alert('Error parsing file.'); }
     };
     reader.readAsText(file);
+  };
+
+  // Summary
+  const calculateSummary = () => {
+    let income = 0, expense = 0, saving = 0;
+    transactions.forEach(t => {
+        let val = t.amount;
+        if (t.currency === 'THB') val *= marketRates.THB;
+        if (t.currency === 'USD') val *= marketRates.USD;
+        if (t.currency === 'SGD') val *= marketRates.SGD;
+        if (t.type === TransactionType.INCOME) income += val;
+        if (t.type === TransactionType.EXPENSE) expense += val;
+        if (t.type === TransactionType.SAVING) saving += val;
+    });
+    return { income, expense, saving, balance: income - expense };
+  };
+  const summary = calculateSummary();
+
+  const DashboardCard = ({ title, amount, icon: Icon, colorClass, bgClass, trend }: any) => (
+    <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-1 duration-300 min-w-0">
+      <div className="flex justify-between items-start mb-4">
+        <div className={`p-3 rounded-xl ${bgClass}`}>
+          <Icon size={24} className={colorClass} />
+        </div>
+        {trend && (
+             <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap">This Month</span>
+        )}
+      </div>
+      <div>
+        <p className="text-gray-500 dark:text-gray-400 text-sm font-semibold tracking-wide uppercase truncate">{title}</p>
+        <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mt-2 break-all leading-none">
+          {new Intl.NumberFormat('en-US', { notation: "compact", compactDisplay: "short" }).format(amount)} 
+          <span className="text-sm text-gray-400 font-normal ml-1">MMK</span>
+        </h3>
+      </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
+
+    // --- Feature Locking for Guest Mode ---
+    // If user is NOT logged in (Guest) AND trying to access 'calculator' or 'tools'
+    if (!user && (activeTab === 'calculator' || activeTab === 'tools')) {
+        return (
+            <div className="relative w-full h-full flex items-center justify-center">
+                {/* Blurred Content Background - Absolute to fill parent */}
+                <div className="absolute inset-0 blur-md pointer-events-none select-none opacity-40 overflow-hidden">
+                    {activeTab === 'calculator' ? (
+                        // Dummy data or static render to show "something" behind the blur without processing real data
+                        <Calculator rates={marketRates} data={calculatorData} onUpdate={()=>{}} />
+                    ) : (
+                        <Tools rates={marketRates} updateRates={()=>{}} onExportData={()=>{}} onImportData={()=>{}} />
+                    )}
+                </div>
+
+                {/* Lock Overlay */}
+                <div className="relative z-20 p-8 bg-white/90 dark:bg-[#1E293B]/90 backdrop-blur-md rounded-3xl shadow-2xl text-center border border-[#D4AF37]/30 max-w-md mx-4 animate-fade-in">
+                    <div className="w-16 h-16 bg-white dark:bg-[#0F172A] rounded-full flex items-center justify-center shadow-xl mb-4 border border-[#D4AF37]/30 mx-auto">
+                        <Lock size={32} className="text-[#D4AF37]" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-[#1E2A38] dark:text-white mb-2">
+                        Premium Feature Locked
+                    </h2>
+                    <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm leading-relaxed">
+                        The <strong>{activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'}</strong> is a premium feature available exclusively for our cloud-synced members.
+                    </p>
+                    
+                    <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl border border-blue-100 dark:border-blue-800">
+                        <p className="text-[10px] uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center justify-center gap-1">
+                            <Phone size={10} /> For Premium Access
+                        </p>
+                        <p className="text-sm font-bold text-gray-800 dark:text-gray-200">
+                            Contact Viber: (+66) 80 563 1811
+                        </p>
+                    </div>
+
+                    <button 
+                        onClick={handleLogin}
+                        className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white text-[#1E2A38] rounded-xl font-bold shadow-xl hover:scale-105 transition-transform border border-gray-200 mb-4"
+                    >
+                        <GoogleLogo className="w-5 h-5" />
+                        <span>Unlock with Google</span>
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('dashboard')}
+                        className="text-xs text-gray-500 dark:text-gray-400 hover:text-[#D4AF37] underline font-medium"
+                    >
+                        Return to Dashboard
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <div className="space-y-8 animate-fade-in w-full">
+             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                {/* Net Worth Card */}
+                <div className="bg-gradient-to-br from-[#0F172A] to-[#020617] p-8 rounded-3xl shadow-xl text-white relative overflow-hidden xl:col-span-4 flex flex-col md:flex-row items-center justify-between gap-6 border border-[#D4AF37]/30">
+                   <div className="absolute -right-10 -top-10 w-64 h-64 bg-[#D4AF37] rounded-full blur-3xl opacity-20 pointer-events-none"></div>
+                   <div className="relative z-10 max-w-full">
+                      <p className="text-[#94A3B8] text-sm font-bold uppercase tracking-wider mb-2">Total Net Balance</p>
+                      <h3 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight break-all drop-shadow-sm">
+                        {new Intl.NumberFormat('en-US').format(summary.balance)} 
+                        <span className="text-lg text-gray-400 font-normal ml-2">MMK</span>
+                      </h3>
+                      <p className="text-gray-400 mt-3 text-sm flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse"></span>
+                        Current available wealth
+                      </p>
+                   </div>
+                   {/* AI Insight Box */}
+                   <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
+                      <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
+                      <p className="text-sm text-gray-300 italic">"{aiInsights.length > 0 ? aiInsights[0] : 'Gathering insights...'}"</p>
+                   </div>
+                </div>
+
+                <DashboardCard title="Total Income" amount={summary.income} icon={ArrowUpCircle} colorClass="text-emerald-500 dark:text-emerald-400" bgClass="bg-emerald-50 dark:bg-emerald-900/20" />
+                <DashboardCard title="Total Savings" amount={summary.saving} icon={Wallet} colorClass="text-[#D4AF37] dark:text-[#FCD34D]" bgClass="bg-[#D4AF37]/10 dark:bg-[#D4AF37]/20" />
+                <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
+                
+                {/* Badges / Gamification Card */}
+                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('analytics')}>
+                    <div className="flex justify-between items-center mb-4">
+                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
+                        <Award size={18} className="text-[#D4AF37]" />
+                    </div>
+                    <div className="flex gap-2 justify-around">
+                        {badges.map(b => (
+                            <div key={b.id} className={`p-2 rounded-full border-2 ${b.unlocked ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]' : 'border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 grayscale'}`} title={b.description}>
+                                <Award size={20} />
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-xs text-center text-gray-400 mt-3">{badges.filter(b=>b.unlocked).length} / {badges.length} Unlocked</p>
+                </div>
+             </div>
+
+             <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 overflow-hidden transition-colors duration-300">
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-[#1E2A38] dark:text-[#FCD34D]">Financial Overview</h3>
+                    <button onClick={() => setActiveTab('analytics')} className="text-sm text-[#D4AF37] dark:text-[#FCD34D] font-bold hover:underline">View Analytics & Budgets</button>
+                </div>
+                <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />
+             </div>
+          </div>
+        );
+      case 'tracker':
+        return <Tracker 
+            transactions={transactions} addTransaction={addTransaction} deleteTransaction={deleteTransaction} 
+            recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
+        />;
+      case 'calculator':
+        return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
+      case 'analytics':
+        return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
+      case 'tools':
+        return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
+      default: return <div>Not Found</div>;
+    }
   };
 
   // --- AUTH ERROR SCREEN ---
@@ -550,170 +715,6 @@ const App: React.FC = () => {
           </div>
       );
   }
-
-  // Summary
-  const calculateSummary = () => {
-    let income = 0, expense = 0, saving = 0;
-    transactions.forEach(t => {
-        let val = t.amount;
-        if (t.currency === 'THB') val *= marketRates.THB;
-        if (t.currency === 'USD') val *= marketRates.USD;
-        if (t.currency === 'SGD') val *= marketRates.SGD;
-        if (t.type === TransactionType.INCOME) income += val;
-        if (t.type === TransactionType.EXPENSE) expense += val;
-        if (t.type === TransactionType.SAVING) saving += val;
-    });
-    return { income, expense, saving, balance: income - expense };
-  };
-  const summary = calculateSummary();
-
-  const DashboardCard = ({ title, amount, icon: Icon, colorClass, bgClass, trend }: any) => (
-    <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-1 duration-300 min-w-0">
-      <div className="flex justify-between items-start mb-4">
-        <div className={`p-3 rounded-xl ${bgClass}`}>
-          <Icon size={24} className={colorClass} />
-        </div>
-        {trend && (
-             <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap">This Month</span>
-        )}
-      </div>
-      <div>
-        <p className="text-gray-500 dark:text-gray-400 text-sm font-semibold tracking-wide uppercase truncate">{title}</p>
-        <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mt-2 break-all leading-none">
-          {new Intl.NumberFormat('en-US', { notation: "compact", compactDisplay: "short" }).format(amount)} 
-          <span className="text-sm text-gray-400 font-normal ml-1">MMK</span>
-        </h3>
-      </div>
-    </div>
-  );
-
-  const renderContent = () => {
-    if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
-
-    // --- Feature Locking for Guest Mode ---
-    // If user is NOT logged in (Guest) AND trying to access 'calculator' or 'tools'
-    if (!user && (activeTab === 'calculator' || activeTab === 'tools')) {
-        return (
-            <div className="relative w-full h-full flex items-center justify-center">
-                {/* Blurred Content Background - Absolute to fill parent */}
-                <div className="absolute inset-0 blur-md pointer-events-none select-none opacity-40 overflow-hidden">
-                    {activeTab === 'calculator' ? (
-                        // Dummy data or static render to show "something" behind the blur without processing real data
-                        <Calculator rates={marketRates} data={calculatorData} onUpdate={()=>{}} />
-                    ) : (
-                        <Tools rates={marketRates} updateRates={()=>{}} onExportData={()=>{}} onImportData={()=>{}} />
-                    )}
-                </div>
-
-                {/* Lock Overlay */}
-                <div className="relative z-20 p-8 bg-white/90 dark:bg-[#1E293B]/90 backdrop-blur-md rounded-3xl shadow-2xl text-center border border-[#D4AF37]/30 max-w-lg mx-4">
-                    <div className="w-20 h-20 bg-white dark:bg-[#0F172A] rounded-full flex items-center justify-center shadow-xl mb-6 border border-[#D4AF37]/30 mx-auto">
-                        <Lock size={40} className="text-[#D4AF37]" />
-                    </div>
-                    <h2 className="text-2xl md:text-3xl font-bold text-[#1E2A38] dark:text-white mb-4">
-                        Premium Feature Locked
-                    </h2>
-                    <p className="text-gray-600 dark:text-gray-300 mb-8 text-base leading-relaxed">
-                        The <strong>{activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'}</strong> is a premium feature available exclusively for our cloud-synced members.
-                    </p>
-                    
-                    <div className="mb-8 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
-                        <p className="text-xs uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center justify-center gap-1">
-                            <Phone size={12} /> To Purchase Premium Service
-                        </p>
-                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
-                            Contact Viber: (+66) 80 563 1811
-                        </p>
-                    </div>
-
-                    <button 
-                        onClick={handleLogin}
-                        className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-white text-[#1E2A38] rounded-xl font-bold shadow-xl hover:scale-105 transition-transform border border-gray-200 mb-6"
-                    >
-                        <GoogleLogo className="w-6 h-6" />
-                        <span className="text-lg">Unlock with Google</span>
-                    </button>
-                    <button 
-                        onClick={() => setActiveTab('dashboard')}
-                        className="text-sm text-gray-500 dark:text-gray-400 hover:text-[#D4AF37] underline font-medium"
-                    >
-                        Return to Dashboard
-                    </button>
-                </div>
-            </div>
-        );
-    }
-
-    switch (activeTab) {
-      case 'dashboard':
-        return (
-          <div className="space-y-8 animate-fade-in w-full">
-             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                {/* Net Worth Card */}
-                <div className="bg-gradient-to-br from-[#0F172A] to-[#020617] p-8 rounded-3xl shadow-xl text-white relative overflow-hidden xl:col-span-4 flex flex-col md:flex-row items-center justify-between gap-6 border border-[#D4AF37]/30">
-                   <div className="absolute -right-10 -top-10 w-64 h-64 bg-[#D4AF37] rounded-full blur-3xl opacity-20 pointer-events-none"></div>
-                   <div className="relative z-10 max-w-full">
-                      <p className="text-[#94A3B8] text-sm font-bold uppercase tracking-wider mb-2">Total Net Balance</p>
-                      <h3 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight break-all drop-shadow-sm">
-                        {new Intl.NumberFormat('en-US').format(summary.balance)} 
-                        <span className="text-lg text-gray-400 font-normal ml-2">MMK</span>
-                      </h3>
-                      <p className="text-gray-400 mt-3 text-sm flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse"></span>
-                        Current available wealth
-                      </p>
-                   </div>
-                   {/* AI Insight Box */}
-                   <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
-                      <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
-                      <p className="text-sm text-gray-300 italic">"{aiInsights.length > 0 ? aiInsights[0] : 'Gathering insights...'}"</p>
-                   </div>
-                </div>
-
-                <DashboardCard title="Total Income" amount={summary.income} icon={ArrowUpCircle} colorClass="text-emerald-500 dark:text-emerald-400" bgClass="bg-emerald-50 dark:bg-emerald-900/20" />
-                <DashboardCard title="Total Savings" amount={summary.saving} icon={Wallet} colorClass="text-[#D4AF37] dark:text-[#FCD34D]" bgClass="bg-[#D4AF37]/10 dark:bg-[#D4AF37]/20" />
-                <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
-                
-                {/* Badges / Gamification Card */}
-                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('analytics')}>
-                    <div className="flex justify-between items-center mb-4">
-                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
-                        <Award size={18} className="text-[#D4AF37]" />
-                    </div>
-                    <div className="flex gap-2 justify-around">
-                        {badges.map(b => (
-                            <div key={b.id} className={`p-2 rounded-full border-2 ${b.unlocked ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]' : 'border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 grayscale'}`} title={b.description}>
-                                <Award size={20} />
-                            </div>
-                        ))}
-                    </div>
-                    <p className="text-xs text-center text-gray-400 mt-3">{badges.filter(b=>b.unlocked).length} / {badges.length} Unlocked</p>
-                </div>
-             </div>
-
-             <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 overflow-hidden transition-colors duration-300">
-                <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-bold text-[#1E2A38] dark:text-[#FCD34D]">Financial Overview</h3>
-                    <button onClick={() => setActiveTab('analytics')} className="text-sm text-[#D4AF37] dark:text-[#FCD34D] font-bold hover:underline">View Analytics & Budgets</button>
-                </div>
-                <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />
-             </div>
-          </div>
-        );
-      case 'tracker':
-        return <Tracker 
-            transactions={transactions} addTransaction={addTransaction} deleteTransaction={deleteTransaction} 
-            recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
-        />;
-      case 'calculator':
-        return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
-      case 'analytics':
-        return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
-      case 'tools':
-        return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
-      default: return <div>Not Found</div>;
-    }
-  };
 
   return (
     <Layout activeTab={activeTab} setActiveTab={setActiveTab} isDarkMode={isDarkMode} toggleTheme={toggleTheme} user={user} onLogin={handleLogin} onLogout={handleLogout}>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import Tracker from './components/Tracker';
@@ -5,12 +6,12 @@ import Calculator from './components/Calculator';
 import Analytics from './components/Analytics';
 import Tools from './components/Tools';
 import { Transaction, TransactionType, MarketRates, CalculatorData, UserProfile, BackupData, Budget, RecurringTransaction, Badge } from './types';
-import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun } from 'lucide-react';
+import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock } from 'lucide-react';
 
 // Firebase Imports
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDoc, onSnapshot, collection, addDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 // --- INITIAL DATA & CONSTANTS ---
 const INITIAL_DATA: Transaction[] = [];
@@ -98,6 +99,7 @@ const App: React.FC = () => {
   // --- AUTH STATE ---
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAccessDenied, setIsAccessDenied] = useState(false);
   
   // --- ONBOARDING STATE ---
   // Check if user has already chosen a mode or is logged in
@@ -114,33 +116,64 @@ const App: React.FC = () => {
   const [badges, setBadges] = useState<Badge[]>(BADGES);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
 
-  // 1. Auth Listener
+  // 1. Auth Listener & Whitelist Check
   useEffect(() => {
     if (!auth) {
         setIsAuthLoading(false);
         return;
     }
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        setUser({
-          id: firebaseUser.uid,
-          name: firebaseUser.displayName || 'User',
-          createdAt: firebaseUser.metadata.creationTime || new Date().toISOString()
-        });
-        // If logged in, we consider mode chosen
-        setHasChosenMode(true);
-        localStorage.setItem(KEY_MODE_CHOSEN, 'true');
+        setIsAuthLoading(true); // Keep loading while checking whitelist
+        
+        try {
+            // Check Whitelist in Firestore
+            const whitelistRef = doc(db, 'admin_settings', 'whitelisted_emails');
+            const docSnap = await getDoc(whitelistRef);
+            
+            let isAllowed = false;
+            if (docSnap.exists()) {
+                const allowedEmails = docSnap.data().emails || [];
+                if (firebaseUser.email && allowedEmails.includes(firebaseUser.email)) {
+                    isAllowed = true;
+                }
+            } else {
+                console.warn("Whitelist document missing. Denying access by default.");
+            }
+
+            if (isAllowed) {
+                setUser({
+                    id: firebaseUser.uid,
+                    name: firebaseUser.displayName || 'User',
+                    createdAt: firebaseUser.metadata.creationTime || new Date().toISOString()
+                });
+                setHasChosenMode(true);
+                localStorage.setItem(KEY_MODE_CHOSEN, 'true');
+                setIsAccessDenied(false);
+            } else {
+                // User not in whitelist
+                setUser(null);
+                setIsAccessDenied(true);
+                await signOut(auth); // Force sign out
+            }
+        } catch (error) {
+            console.error("Whitelist Check Error:", error);
+            setIsAccessDenied(true);
+            await signOut(auth);
+        }
+        
+        setIsAuthLoading(false);
       } else {
         setUser(null);
+        setIsAuthLoading(false);
       }
-      setIsAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
   // 2. Data Loading Logic
   useEffect(() => {
-    if (isAuthLoading) return;
+    if (isAuthLoading || isAccessDenied) return;
 
     if (user && db) {
         // Cloud Listeners
@@ -183,7 +216,7 @@ const App: React.FC = () => {
         setBudgets(savedB ? JSON.parse(savedB) : []);
         setRecurringTransactions(savedRT ? JSON.parse(savedRT) : []);
     }
-  }, [user, isAuthLoading, hasChosenMode]);
+  }, [user, isAuthLoading, hasChosenMode, isAccessDenied]);
 
   // 3. Save Data (Guest Mode)
   useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_TRANSACTIONS, JSON.stringify(transactions)); }, [transactions, user, hasChosenMode]);
@@ -194,7 +227,7 @@ const App: React.FC = () => {
 
   // 4. RECURRING TRANSACTIONS LOGIC (Runs on load)
   useEffect(() => {
-      if (!hasChosenMode) return; // Don't run until mode is chosen
+      if (!hasChosenMode || isAccessDenied) return; // Don't run until mode is chosen
 
       const today = new Date();
       const currentDay = today.getDate();
@@ -244,11 +277,11 @@ const App: React.FC = () => {
               alert(`Processed ${newTransactions.length} recurring transactions!`);
           }
       }
-  }, [recurringTransactions, user, hasChosenMode]);
+  }, [recurringTransactions, user, hasChosenMode, isAccessDenied]);
 
   // 5. AI INSIGHTS & GAMIFICATION
   useEffect(() => {
-      if (!hasChosenMode) return;
+      if (!hasChosenMode || isAccessDenied) return;
 
       // Calc totals
       let income = 0, expense = 0;
@@ -291,7 +324,7 @@ const App: React.FC = () => {
       
       setAiInsights(insights.length ? insights : ["Gathering more data for insights..."]);
 
-  }, [transactions, marketRates, hasChosenMode]);
+  }, [transactions, marketRates, hasChosenMode, isAccessDenied]);
 
 
   // --- ACTIONS ---
@@ -317,6 +350,8 @@ const App: React.FC = () => {
       console.error("Login Error:", error);
       if (error.code === 'auth/configuration-not-found' || error.code === 'auth/api-key-not-valid') {
           alert("Login Failed: Invalid Firebase Configuration. Please check your API Keys.");
+      } else if (error.code === 'auth/unauthorized-domain') {
+          alert("Login Failed: Domain not authorized.\n\nPlease go to Firebase Console -> Authentication -> Settings -> Authorized Domains and add this domain.");
       } else if (error.code !== 'auth/popup-closed-by-user') {
           alert("Login failed. Check console for details.");
       }
@@ -418,115 +453,28 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
-  // Summary
-  const calculateSummary = () => {
-    let income = 0, expense = 0, saving = 0;
-    transactions.forEach(t => {
-        let val = t.amount;
-        if (t.currency === 'THB') val *= marketRates.THB;
-        if (t.currency === 'USD') val *= marketRates.USD;
-        if (t.currency === 'SGD') val *= marketRates.SGD;
-        if (t.type === TransactionType.INCOME) income += val;
-        if (t.type === TransactionType.EXPENSE) expense += val;
-        if (t.type === TransactionType.SAVING) saving += val;
-    });
-    return { income, expense, saving, balance: income - expense };
-  };
-  const summary = calculateSummary();
-
-  const DashboardCard = ({ title, amount, icon: Icon, colorClass, bgClass, trend }: any) => (
-    <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-1 duration-300 min-w-0">
-      <div className="flex justify-between items-start mb-4">
-        <div className={`p-3 rounded-xl ${bgClass}`}>
-          <Icon size={24} className={colorClass} />
-        </div>
-        {trend && (
-             <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap">This Month</span>
-        )}
-      </div>
-      <div>
-        <p className="text-gray-500 dark:text-gray-400 text-sm font-semibold tracking-wide uppercase truncate">{title}</p>
-        <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mt-2 break-all leading-none">
-          {new Intl.NumberFormat('en-US', { notation: "compact", compactDisplay: "short" }).format(amount)} 
-          <span className="text-sm text-gray-400 font-normal ml-1">MMK</span>
-        </h3>
-      </div>
-    </div>
-  );
-
-  const renderContent = () => {
-    if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
-
-    switch (activeTab) {
-      case 'dashboard':
-        return (
-          <div className="space-y-8 animate-fade-in w-full">
-             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                {/* Net Worth Card */}
-                <div className="bg-gradient-to-br from-[#0F172A] to-[#020617] p-8 rounded-3xl shadow-xl text-white relative overflow-hidden xl:col-span-4 flex flex-col md:flex-row items-center justify-between gap-6 border border-[#D4AF37]/30">
-                   <div className="absolute -right-10 -top-10 w-64 h-64 bg-[#D4AF37] rounded-full blur-3xl opacity-20 pointer-events-none"></div>
-                   <div className="relative z-10 max-w-full">
-                      <p className="text-[#94A3B8] text-sm font-bold uppercase tracking-wider mb-2">Total Net Balance</p>
-                      <h3 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight break-all drop-shadow-sm">
-                        {new Intl.NumberFormat('en-US').format(summary.balance)} 
-                        <span className="text-lg text-gray-400 font-normal ml-2">MMK</span>
-                      </h3>
-                      <p className="text-gray-400 mt-3 text-sm flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse"></span>
-                        Current available wealth
-                      </p>
-                   </div>
-                   {/* AI Insight Box */}
-                   <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
-                      <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
-                      <p className="text-sm text-gray-300 italic">"{aiInsights[0]}"</p>
-                   </div>
-                </div>
-
-                <DashboardCard title="Total Income" amount={summary.income} icon={ArrowUpCircle} colorClass="text-emerald-500 dark:text-emerald-400" bgClass="bg-emerald-50 dark:bg-emerald-900/20" />
-                <DashboardCard title="Total Savings" amount={summary.saving} icon={Wallet} colorClass="text-[#D4AF37] dark:text-[#FCD34D]" bgClass="bg-[#D4AF37]/10 dark:bg-[#D4AF37]/20" />
-                <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
-                
-                {/* Badges / Gamification Card */}
-                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('tools')}>
-                    <div className="flex justify-between items-center mb-4">
-                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
-                        <Award size={18} className="text-[#D4AF37]" />
-                    </div>
-                    <div className="flex gap-2 justify-around">
-                        {badges.map(b => (
-                            <div key={b.id} className={`p-2 rounded-full border-2 ${b.unlocked ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]' : 'border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 grayscale'}`} title={b.description}>
-                                <Award size={20} />
-                            </div>
-                        ))}
-                    </div>
-                    <p className="text-xs text-center text-gray-400 mt-3">{badges.filter(b=>b.unlocked).length} / {badges.length} Unlocked</p>
-                </div>
-             </div>
-
-             <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 overflow-hidden transition-colors duration-300">
-                <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-bold text-[#1E2A38] dark:text-[#FCD34D]">Financial Overview</h3>
-                    <button onClick={() => setActiveTab('analytics')} className="text-sm text-[#D4AF37] dark:text-[#FCD34D] font-bold hover:underline">View Analytics & Budgets</button>
-                </div>
-                <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />
-             </div>
+  // --- ACCESS DENIED SCREEN ---
+  if (isAccessDenied) {
+      return (
+          <div className={`flex flex-col items-center justify-center min-h-screen p-6 bg-red-50 dark:bg-[#020617] transition-colors duration-300`}>
+              <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-2xl text-center max-w-md border border-red-200 dark:border-red-900">
+                  <div className="w-20 h-20 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                      <Lock size={40} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">Access Denied</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-8 leading-relaxed">
+                      Your Google account is not authorized to access this application. Please contact the administrator to whitelist your email.
+                  </p>
+                  <button 
+                    onClick={() => { setIsAccessDenied(false); window.location.reload(); }}
+                    className="w-full py-3 bg-[#1E2A38] text-white rounded-xl font-bold shadow-lg hover:bg-black transition-all"
+                  >
+                    Return to Home
+                  </button>
+              </div>
           </div>
-        );
-      case 'tracker':
-        return <Tracker 
-            transactions={transactions} addTransaction={addTransaction} deleteTransaction={deleteTransaction} 
-            recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
-        />;
-      case 'calculator':
-        return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
-      case 'analytics':
-        return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
-      case 'tools':
-        return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
-      default: return <div>Not Found</div>;
-    }
-  };
+      );
+  }
 
   // --- CONDITIONAL RENDER: ONBOARDING SCREEN ---
   if (!hasChosenMode && !user && !isAuthLoading) {
@@ -577,7 +525,7 @@ const App: React.FC = () => {
                           </div>
                           <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Cloud Sync</h3>
                           <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-6">
-                              Best for long-term use. Access your finance data from <strong>any device</strong> and never lose it.
+                              Best for long-term use. Access your finance data from <strong>any device</strong>. <span className="text-red-400 font-bold">*Admin Approval Required</span>
                           </p>
                           <button className="w-full flex items-center justify-center gap-3 py-3 bg-white border border-gray-200 dark:border-gray-700 rounded-xl font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors shadow-sm">
                               <GoogleLogo className="w-5 h-5" /> Sign in with Google
@@ -593,6 +541,117 @@ const App: React.FC = () => {
           </div>
       );
   }
+
+  // --- HELPERS & RENDER ---
+  const calculateSummary = () => {
+    let income = 0, expense = 0, saving = 0;
+    transactions.forEach(t => {
+        let val = t.amount;
+        if (t.currency === 'THB') val *= marketRates.THB;
+        if (t.currency === 'USD') val *= marketRates.USD;
+        if (t.currency === 'SGD') val *= marketRates.SGD;
+        if (t.type === TransactionType.INCOME) income += val;
+        if (t.type === TransactionType.EXPENSE) expense += val;
+        if (t.type === TransactionType.SAVING) saving += val;
+    });
+    return { income, expense, saving, balance: income - expense };
+  };
+  
+  const summary = calculateSummary();
+
+  const DashboardCard = ({ title, amount, icon: Icon, colorClass, bgClass, trend }: any) => (
+    <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-1 duration-300 min-w-0">
+      <div className="flex justify-between items-start mb-4">
+        <div className={`p-3 rounded-xl ${bgClass}`}>
+          <Icon size={24} className={colorClass} />
+        </div>
+        {trend && (
+             <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap">This Month</span>
+        )}
+      </div>
+      <div>
+        <p className="text-gray-500 dark:text-gray-400 text-sm font-semibold tracking-wide uppercase truncate">{title}</p>
+        <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mt-2 break-all leading-none">
+          {new Intl.NumberFormat('en-US', { notation: "compact", compactDisplay: "short" }).format(amount)} 
+          <span className="text-sm text-gray-400 font-normal ml-1">MMK</span>
+        </h3>
+      </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
+
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <div className="space-y-8 animate-fade-in w-full">
+             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                {/* Net Worth Card */}
+                <div className="bg-gradient-to-br from-[#0F172A] to-[#020617] p-8 rounded-3xl shadow-xl text-white relative overflow-hidden xl:col-span-4 flex flex-col md:flex-row items-center justify-between gap-6 border border-[#D4AF37]/30">
+                   <div className="absolute -right-10 -top-10 w-64 h-64 bg-[#D4AF37] rounded-full blur-3xl opacity-20 pointer-events-none"></div>
+                   <div className="relative z-10 max-w-full">
+                      <p className="text-[#94A3B8] text-sm font-bold uppercase tracking-wider mb-2">Total Net Balance</p>
+                      <h3 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight break-all drop-shadow-sm">
+                        {new Intl.NumberFormat('en-US').format(summary.balance)} 
+                        <span className="text-lg text-gray-400 font-normal ml-2">MMK</span>
+                      </h3>
+                      <p className="text-gray-400 mt-3 text-sm flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse"></span>
+                        Current available wealth
+                      </p>
+                   </div>
+                   {/* AI Insight Box */}
+                   <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
+                      <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
+                      <p className="text-sm text-gray-300 italic">"{aiInsights.length > 0 ? aiInsights[0] : 'Gathering insights...'}"</p>
+                   </div>
+                </div>
+
+                <DashboardCard title="Total Income" amount={summary.income} icon={ArrowUpCircle} colorClass="text-emerald-500 dark:text-emerald-400" bgClass="bg-emerald-50 dark:bg-emerald-900/20" />
+                <DashboardCard title="Total Savings" amount={summary.saving} icon={Wallet} colorClass="text-[#D4AF37] dark:text-[#FCD34D]" bgClass="bg-[#D4AF37]/10 dark:bg-[#D4AF37]/20" />
+                <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
+                
+                {/* Badges / Gamification Card */}
+                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('tools')}>
+                    <div className="flex justify-between items-center mb-4">
+                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
+                        <Award size={18} className="text-[#D4AF37]" />
+                    </div>
+                    <div className="flex gap-2 justify-around">
+                        {badges.map(b => (
+                            <div key={b.id} className={`p-2 rounded-full border-2 ${b.unlocked ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]' : 'border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 grayscale'}`} title={b.description}>
+                                <Award size={20} />
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-xs text-center text-gray-400 mt-3">{badges.filter(b=>b.unlocked).length} / {badges.length} Unlocked</p>
+                </div>
+             </div>
+
+             <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 overflow-hidden transition-colors duration-300">
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-[#1E2A38] dark:text-[#FCD34D]">Financial Overview</h3>
+                    <button onClick={() => setActiveTab('analytics')} className="text-sm text-[#D4AF37] dark:text-[#FCD34D] font-bold hover:underline">View Analytics & Budgets</button>
+                </div>
+                <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />
+             </div>
+          </div>
+        );
+      case 'tracker':
+        return <Tracker 
+            transactions={transactions} addTransaction={addTransaction} deleteTransaction={deleteTransaction} 
+            recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
+        />;
+      case 'calculator':
+        return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
+      case 'analytics':
+        return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
+      case 'tools':
+        return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
+      default: return <div>Not Found</div>;
+    }
+  };
 
   return (
     <Layout activeTab={activeTab} setActiveTab={setActiveTab} isDarkMode={isDarkMode} toggleTheme={toggleTheme} user={user} onLogin={handleLogin} onLogout={handleLogout}>

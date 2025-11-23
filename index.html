@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShweBudget - Premium Financial Planner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Padauk:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+      /* Hide number input arrows globally for a cleaner UI */
+      /* Chrome, Safari, Edge, Opera */
+      input::-webkit-outer-spin-button,
+      input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      /* Firefox */
+      input[type=number] {
+        -moz-appearance: textfield;
+      }
+    </style>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                gold: '#D4AF37', 
+                dark: '#0F172A',
+                green: '#10B981', // Emerald 500
+                red: '#EF4444', // Red 500
+              },
+            },
+            backgroundImage: {
+              'gold-gradient': 'linear-gradient(135deg, #FCD34D 0%, #D4AF37 40%, #B45309 100%)', // Metallic Gold
+              'gold-text': 'linear-gradient(to right, #FCD34D, #F59E0B, #B45309)',
+              'luxury-dark': 'linear-gradient(to bottom, #1E293B, #0F172A)',
+            },
+            fontFamily: {
+              sans: ['Inter', 'Padauk', 'sans-serif'],
+            },
+            animation: {
+              'fade-in': 'fadeIn 0.5s ease-out',
+              'shimmer': 'shimmer 2.5s linear infinite',
+              'shine': 'shine 4s infinite',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0', transform: 'translateY(10px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              },
+              shimmer: {
+                '0%': { backgroundPosition: '-1000px 0' },
+                '100%': { backgroundPosition: '1000px 0' }
+              },
+              shine: {
+                '0%': { backgroundPosition: '200% center' },
+                '100%': { backgroundPosition: '-200% center' }
+              }
+            }
+          }
+        }
+      }
+    </script>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "firebase/": "https://aistudiocdn.com/firebase@^12.6.0/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "recharts": "https://aistudiocdn.com/recharts@^3.5.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-50 text-gray-900 dark:bg-[#020617] dark:text-gray-100 transition-colors duration-300">
+    <div id="root"></div>
+    <!-- CRITICAL: This script tag is required for Vite to load your React App -->
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

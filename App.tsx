@@ -6,7 +6,7 @@ import Calculator from './components/Calculator';
 import Analytics from './components/Analytics';
 import Tools from './components/Tools';
 import { Transaction, TransactionType, MarketRates, CalculatorData, UserProfile, BackupData, Budget, RecurringTransaction, Badge } from './types';
-import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock } from 'lucide-react';
+import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock, AlertTriangle } from 'lucide-react';
 
 // Firebase Imports
 import { auth, googleProvider, db } from './firebase';
@@ -453,6 +453,161 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
+  // Summary
+  const calculateSummary = () => {
+    let income = 0, expense = 0, saving = 0;
+    transactions.forEach(t => {
+        let val = t.amount;
+        if (t.currency === 'THB') val *= marketRates.THB;
+        if (t.currency === 'USD') val *= marketRates.USD;
+        if (t.currency === 'SGD') val *= marketRates.SGD;
+        if (t.type === TransactionType.INCOME) income += val;
+        if (t.type === TransactionType.EXPENSE) expense += val;
+        if (t.type === TransactionType.SAVING) saving += val;
+    });
+    return { income, expense, saving, balance: income - expense };
+  };
+  const summary = calculateSummary();
+
+  const DashboardCard = ({ title, amount, icon: Icon, colorClass, bgClass, trend }: any) => (
+    <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-1 duration-300 min-w-0">
+      <div className="flex justify-between items-start mb-4">
+        <div className={`p-3 rounded-xl ${bgClass}`}>
+          <Icon size={24} className={colorClass} />
+        </div>
+        {trend && (
+             <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap">This Month</span>
+        )}
+      </div>
+      <div>
+        <p className="text-gray-500 dark:text-gray-400 text-sm font-semibold tracking-wide uppercase truncate">{title}</p>
+        <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mt-2 break-all leading-none">
+          {new Intl.NumberFormat('en-US', { notation: "compact", compactDisplay: "short" }).format(amount)} 
+          <span className="text-sm text-gray-400 font-normal ml-1">MMK</span>
+        </h3>
+      </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
+
+    // --- Feature Locking for Guest Mode ---
+    // If user is NOT logged in (Guest) AND trying to access 'calculator' or 'tools'
+    if (!user && (activeTab === 'calculator' || activeTab === 'tools')) {
+        return (
+            <div className="relative w-full">
+                {/* Blurred Content */}
+                <div className="blur-md pointer-events-none select-none opacity-50">
+                    {activeTab === 'calculator' ? (
+                        <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />
+                    ) : (
+                        <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />
+                    )}
+                </div>
+
+                {/* Lock Overlay */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center z-20 p-6 text-center">
+                    <div className="w-20 h-20 bg-white dark:bg-[#1E293B] rounded-full flex items-center justify-center shadow-2xl mb-6 border border-[#D4AF37]/30">
+                        <Lock size={40} className="text-[#D4AF37]" />
+                    </div>
+                    <h2 className="text-2xl md:text-3xl font-bold text-[#1E2A38] dark:text-white mb-3">
+                        Premium Feature Locked
+                    </h2>
+                    <p className="text-gray-600 dark:text-gray-300 max-w-md mb-8 text-lg leading-relaxed">
+                        The {activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'} is a premium feature available exclusively for our cloud-synced members.
+                    </p>
+                    <button 
+                        onClick={handleLogin}
+                        className="flex items-center gap-3 px-8 py-4 bg-white text-[#1E2A38] rounded-xl font-bold shadow-xl hover:scale-105 transition-transform border border-gray-200"
+                    >
+                        <GoogleLogo className="w-6 h-6" />
+                        <span className="text-lg">Unlock with Google</span>
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('dashboard')}
+                        className="mt-6 text-sm text-gray-500 dark:text-gray-400 hover:text-[#D4AF37] underline"
+                    >
+                        Return to Dashboard
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <div className="space-y-8 animate-fade-in w-full">
+             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                {/* Net Worth Card */}
+                <div className="bg-gradient-to-br from-[#0F172A] to-[#020617] p-8 rounded-3xl shadow-xl text-white relative overflow-hidden xl:col-span-4 flex flex-col md:flex-row items-center justify-between gap-6 border border-[#D4AF37]/30">
+                   <div className="absolute -right-10 -top-10 w-64 h-64 bg-[#D4AF37] rounded-full blur-3xl opacity-20 pointer-events-none"></div>
+                   <div className="relative z-10 max-w-full">
+                      <p className="text-[#94A3B8] text-sm font-bold uppercase tracking-wider mb-2">Total Net Balance</p>
+                      <h3 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight break-all drop-shadow-sm">
+                        {new Intl.NumberFormat('en-US').format(summary.balance)} 
+                        <span className="text-lg text-gray-400 font-normal ml-2">MMK</span>
+                      </h3>
+                      <p className="text-gray-400 mt-3 text-sm flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse"></span>
+                        Current available wealth
+                      </p>
+                   </div>
+                   {/* AI Insight Box */}
+                   <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
+                      <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
+                      <p className="text-sm text-gray-300 italic">"{aiInsights.length > 0 ? aiInsights[0] : 'Gathering insights...'}"</p>
+                   </div>
+                </div>
+
+                <DashboardCard title="Total Income" amount={summary.income} icon={ArrowUpCircle} colorClass="text-emerald-500 dark:text-emerald-400" bgClass="bg-emerald-50 dark:bg-emerald-900/20" />
+                <DashboardCard title="Total Savings" amount={summary.saving} icon={Wallet} colorClass="text-[#D4AF37] dark:text-[#FCD34D]" bgClass="bg-[#D4AF37]/10 dark:bg-[#D4AF37]/20" />
+                <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
+                
+                {/* Badges / Gamification Card */}
+                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('analytics')}>
+                    <div className="flex justify-between items-center mb-4">
+                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
+                        <Award size={18} className="text-[#D4AF37]" />
+                    </div>
+                    <div className="flex gap-2 justify-around">
+                        {badges.map(b => (
+                            <div key={b.id} className={`p-2 rounded-full border-2 ${b.unlocked ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]' : 'border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 grayscale'}`} title={b.description}>
+                                <Award size={20} />
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-xs text-center text-gray-400 mt-3">{badges.filter(b=>b.unlocked).length} / {badges.length} Unlocked</p>
+                </div>
+             </div>
+
+             <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 overflow-hidden transition-colors duration-300">
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-[#1E2A38] dark:text-[#FCD34D]">Financial Overview</h3>
+                    <button onClick={() => setActiveTab('analytics')} className="text-sm text-[#D4AF37] dark:text-[#FCD34D] font-bold hover:underline">View Analytics & Budgets</button>
+                </div>
+                <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />
+             </div>
+          </div>
+        );
+      case 'tracker':
+        return <Tracker 
+            transactions={transactions} addTransaction={addTransaction} deleteTransaction={deleteTransaction} 
+            recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
+        />;
+      case 'calculator':
+        // If authenticated, render normally
+        return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
+      case 'analytics':
+        return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
+      case 'tools':
+        // If authenticated, render normally
+        return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
+      default: return <div>Not Found</div>;
+    }
+  };
+
   // --- ACCESS DENIED SCREEN ---
   if (isAccessDenied) {
       return (
@@ -481,10 +636,7 @@ const App: React.FC = () => {
       return (
           <div className={`flex flex-col items-center justify-center min-h-screen p-6 bg-gray-50 dark:bg-[#020617] transition-colors duration-300 ${isDarkMode ? 'dark' : ''}`}>
               <div className="absolute top-6 right-6">
-                  <button 
-                    onClick={toggleTheme}
-                    className="p-3 rounded-xl bg-white dark:bg-[#1E293B] text-gray-500 dark:text-gray-400 shadow-md hover:text-[#D4AF37] transition-all"
-                  >
+                  <button onClick={toggleTheme} className="p-3 rounded-xl bg-white dark:bg-[#1E293B] text-gray-500 dark:text-gray-400 shadow-md hover:text-[#D4AF37] transition-all">
                     {isDarkMode ? <Moon size={20}/> : <Sun size={20}/>}
                   </button>
               </div>
@@ -541,117 +693,6 @@ const App: React.FC = () => {
           </div>
       );
   }
-
-  // --- HELPERS & RENDER ---
-  const calculateSummary = () => {
-    let income = 0, expense = 0, saving = 0;
-    transactions.forEach(t => {
-        let val = t.amount;
-        if (t.currency === 'THB') val *= marketRates.THB;
-        if (t.currency === 'USD') val *= marketRates.USD;
-        if (t.currency === 'SGD') val *= marketRates.SGD;
-        if (t.type === TransactionType.INCOME) income += val;
-        if (t.type === TransactionType.EXPENSE) expense += val;
-        if (t.type === TransactionType.SAVING) saving += val;
-    });
-    return { income, expense, saving, balance: income - expense };
-  };
-  
-  const summary = calculateSummary();
-
-  const DashboardCard = ({ title, amount, icon: Icon, colorClass, bgClass, trend }: any) => (
-    <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-1 duration-300 min-w-0">
-      <div className="flex justify-between items-start mb-4">
-        <div className={`p-3 rounded-xl ${bgClass}`}>
-          <Icon size={24} className={colorClass} />
-        </div>
-        {trend && (
-             <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap">This Month</span>
-        )}
-      </div>
-      <div>
-        <p className="text-gray-500 dark:text-gray-400 text-sm font-semibold tracking-wide uppercase truncate">{title}</p>
-        <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mt-2 break-all leading-none">
-          {new Intl.NumberFormat('en-US', { notation: "compact", compactDisplay: "short" }).format(amount)} 
-          <span className="text-sm text-gray-400 font-normal ml-1">MMK</span>
-        </h3>
-      </div>
-    </div>
-  );
-
-  const renderContent = () => {
-    if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
-
-    switch (activeTab) {
-      case 'dashboard':
-        return (
-          <div className="space-y-8 animate-fade-in w-full">
-             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                {/* Net Worth Card */}
-                <div className="bg-gradient-to-br from-[#0F172A] to-[#020617] p-8 rounded-3xl shadow-xl text-white relative overflow-hidden xl:col-span-4 flex flex-col md:flex-row items-center justify-between gap-6 border border-[#D4AF37]/30">
-                   <div className="absolute -right-10 -top-10 w-64 h-64 bg-[#D4AF37] rounded-full blur-3xl opacity-20 pointer-events-none"></div>
-                   <div className="relative z-10 max-w-full">
-                      <p className="text-[#94A3B8] text-sm font-bold uppercase tracking-wider mb-2">Total Net Balance</p>
-                      <h3 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight break-all drop-shadow-sm">
-                        {new Intl.NumberFormat('en-US').format(summary.balance)} 
-                        <span className="text-lg text-gray-400 font-normal ml-2">MMK</span>
-                      </h3>
-                      <p className="text-gray-400 mt-3 text-sm flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse"></span>
-                        Current available wealth
-                      </p>
-                   </div>
-                   {/* AI Insight Box */}
-                   <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
-                      <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
-                      <p className="text-sm text-gray-300 italic">"{aiInsights.length > 0 ? aiInsights[0] : 'Gathering insights...'}"</p>
-                   </div>
-                </div>
-
-                <DashboardCard title="Total Income" amount={summary.income} icon={ArrowUpCircle} colorClass="text-emerald-500 dark:text-emerald-400" bgClass="bg-emerald-50 dark:bg-emerald-900/20" />
-                <DashboardCard title="Total Savings" amount={summary.saving} icon={Wallet} colorClass="text-[#D4AF37] dark:text-[#FCD34D]" bgClass="bg-[#D4AF37]/10 dark:bg-[#D4AF37]/20" />
-                <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
-                
-                {/* Badges / Gamification Card */}
-                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('tools')}>
-                    <div className="flex justify-between items-center mb-4">
-                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
-                        <Award size={18} className="text-[#D4AF37]" />
-                    </div>
-                    <div className="flex gap-2 justify-around">
-                        {badges.map(b => (
-                            <div key={b.id} className={`p-2 rounded-full border-2 ${b.unlocked ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]' : 'border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 grayscale'}`} title={b.description}>
-                                <Award size={20} />
-                            </div>
-                        ))}
-                    </div>
-                    <p className="text-xs text-center text-gray-400 mt-3">{badges.filter(b=>b.unlocked).length} / {badges.length} Unlocked</p>
-                </div>
-             </div>
-
-             <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-lg shadow-gray-200/50 dark:shadow-black/50 border border-gray-100 dark:border-gray-800 overflow-hidden transition-colors duration-300">
-                <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-bold text-[#1E2A38] dark:text-[#FCD34D]">Financial Overview</h3>
-                    <button onClick={() => setActiveTab('analytics')} className="text-sm text-[#D4AF37] dark:text-[#FCD34D] font-bold hover:underline">View Analytics & Budgets</button>
-                </div>
-                <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />
-             </div>
-          </div>
-        );
-      case 'tracker':
-        return <Tracker 
-            transactions={transactions} addTransaction={addTransaction} deleteTransaction={deleteTransaction} 
-            recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
-        />;
-      case 'calculator':
-        return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
-      case 'analytics':
-        return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
-      case 'tools':
-        return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
-      default: return <div>Not Found</div>;
-    }
-  };
 
   return (
     <Layout activeTab={activeTab} setActiveTab={setActiveTab} isDarkMode={isDarkMode} toggleTheme={toggleTheme} user={user} onLogin={handleLogin} onLogout={handleLogout}>

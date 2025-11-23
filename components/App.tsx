@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import Tracker from './components/Tracker';
@@ -6,12 +5,12 @@ import Calculator from './components/Calculator';
 import Analytics from './components/Analytics';
 import Tools from './components/Tools';
 import { Transaction, TransactionType, MarketRates, CalculatorData, UserProfile, BackupData, Budget, RecurringTransaction, Badge } from './types';
-import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown } from 'lucide-react';
+import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock, AlertTriangle, Phone } from 'lucide-react';
 
 // Firebase Imports
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDoc, onSnapshot, collection, addDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 // --- INITIAL DATA & CONSTANTS ---
 const INITIAL_DATA: Transaction[] = [];
@@ -47,11 +46,45 @@ const BADGES: Badge[] = [
 
 // Keys for Guest Mode
 const KEY_THEME = 'theme';
+const KEY_MODE_CHOSEN = 'shwebudget_mode_chosen'; // New key to track if user has seen onboarding
 const KEY_GUEST_TRANSACTIONS = 'shwebudget_guest_transactions';
 const KEY_GUEST_RATES = 'shwebudget_guest_rates';
 const KEY_GUEST_CALC = 'shwebudget_guest_calc';
 const KEY_GUEST_BUDGETS = 'shwebudget_guest_budgets';
 const KEY_GUEST_RECURRING = 'shwebudget_guest_recurring';
+
+// Google Official Logo
+const GoogleLogo = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" className={className} xmlns="http://www.w3.org/2000/svg">
+    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+  </svg>
+);
+
+// Custom Premium Gold Coin Logo (Small for onboarding)
+const GoldCoinLogo = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <defs>
+      <linearGradient id="coinGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stopColor="#FFFBEB" />
+        <stop offset="25%" stopColor="#FCD34D" />
+        <stop offset="50%" stopColor="#D97706" />
+        <stop offset="100%" stopColor="#78350F" />
+      </linearGradient>
+      <linearGradient id="innerGrad" x1="18" y1="18" x2="6" y2="6" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stopColor="#B45309" />
+        <stop offset="40%" stopColor="#F59E0B" />
+        <stop offset="100%" stopColor="#FEF3C7" />
+      </linearGradient>
+    </defs>
+    <circle cx="12" cy="12" r="11" fill="url(#coinGrad)" stroke="#92400E" strokeWidth="0.5"/>
+    <circle cx="12" cy="12" r="9" fill="none" stroke="#FFFBEB" strokeWidth="0.5" strokeOpacity="0.5" strokeDasharray="0.5 1"/>
+    <circle cx="12" cy="12" r="7.5" fill="url(#innerGrad)" stroke="#78350F" strokeWidth="0.2" />
+    <text x="12" y="15.5" fontSize="11" fontWeight="900" fontFamily="serif" textAnchor="middle" fill="#78350F">S</text>
+  </svg>
+);
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -65,6 +98,14 @@ const App: React.FC = () => {
   // --- AUTH STATE ---
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAccessDenied, setIsAccessDenied] = useState(false);
+  const [authError, setAuthError] = useState<{title: string, message: string} | null>(null);
+  
+  // --- ONBOARDING STATE ---
+  // Check if user has already chosen a mode or is logged in
+  const [hasChosenMode, setHasChosenMode] = useState<boolean>(() => {
+      return localStorage.getItem(KEY_MODE_CHOSEN) === 'true';
+  });
 
   // --- DATA STATES ---
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_DATA);
@@ -75,30 +116,65 @@ const App: React.FC = () => {
   const [badges, setBadges] = useState<Badge[]>(BADGES);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
 
-  // 1. Auth Listener
+  // 1. Auth Listener & Whitelist Check
   useEffect(() => {
     if (!auth) {
         setIsAuthLoading(false);
         return;
     }
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        setUser({
-          id: firebaseUser.uid,
-          name: firebaseUser.displayName || 'User',
-          createdAt: firebaseUser.metadata.creationTime || new Date().toISOString()
-        });
+        setIsAuthLoading(true); // Keep loading while checking whitelist
+        
+        try {
+            // Check Whitelist in Firestore
+            const whitelistRef = doc(db, 'admin_settings', 'whitelisted_emails');
+            const docSnap = await getDoc(whitelistRef);
+            
+            let isAllowed = false;
+            if (docSnap.exists()) {
+                const allowedEmails = docSnap.data().emails || [];
+                if (firebaseUser.email && allowedEmails.includes(firebaseUser.email)) {
+                    isAllowed = true;
+                }
+            } else {
+                console.warn("Whitelist document missing. Denying access by default.");
+            }
+
+            if (isAllowed) {
+                setUser({
+                    id: firebaseUser.uid,
+                    name: firebaseUser.displayName || 'User',
+                    createdAt: firebaseUser.metadata.creationTime || new Date().toISOString()
+                });
+                setHasChosenMode(true);
+                localStorage.setItem(KEY_MODE_CHOSEN, 'true');
+                setIsAccessDenied(false);
+            } else {
+                // User not in whitelist
+                setUser(null);
+                setIsAccessDenied(true);
+                await signOut(auth); // Force sign out
+            }
+        } catch (error) {
+            console.error("Whitelist Check Error:", error);
+            // If there's an error reading the whitelist (e.g., permissions), assume access denied for safety
+            setIsAccessDenied(true);
+            await signOut(auth);
+        }
+        
+        setIsAuthLoading(false);
       } else {
         setUser(null);
+        setIsAuthLoading(false);
       }
-      setIsAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
   // 2. Data Loading Logic
   useEffect(() => {
-    if (isAuthLoading) return;
+    if (isAuthLoading || isAccessDenied || authError) return;
 
     if (user && db) {
         // Cloud Listeners
@@ -127,8 +203,8 @@ const App: React.FC = () => {
             unsubTrans();
         };
 
-    } else {
-        // Guest Mode
+    } else if (hasChosenMode) {
+        // Guest Mode - Load only if mode is chosen
         const savedT = localStorage.getItem(KEY_GUEST_TRANSACTIONS);
         const savedR = localStorage.getItem(KEY_GUEST_RATES);
         const savedC = localStorage.getItem(KEY_GUEST_CALC);
@@ -141,17 +217,19 @@ const App: React.FC = () => {
         setBudgets(savedB ? JSON.parse(savedB) : []);
         setRecurringTransactions(savedRT ? JSON.parse(savedRT) : []);
     }
-  }, [user, isAuthLoading]);
+  }, [user, isAuthLoading, hasChosenMode, isAccessDenied, authError]);
 
   // 3. Save Data (Guest Mode)
-  useEffect(() => { if (!user) localStorage.setItem(KEY_GUEST_TRANSACTIONS, JSON.stringify(transactions)); }, [transactions, user]);
-  useEffect(() => { if (!user) localStorage.setItem(KEY_GUEST_RATES, JSON.stringify(marketRates)); }, [marketRates, user]);
-  useEffect(() => { if (!user) localStorage.setItem(KEY_GUEST_CALC, JSON.stringify(calculatorData)); }, [calculatorData, user]);
-  useEffect(() => { if (!user) localStorage.setItem(KEY_GUEST_BUDGETS, JSON.stringify(budgets)); }, [budgets, user]);
-  useEffect(() => { if (!user) localStorage.setItem(KEY_GUEST_RECURRING, JSON.stringify(recurringTransactions)); }, [recurringTransactions, user]);
+  useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_TRANSACTIONS, JSON.stringify(transactions)); }, [transactions, user, hasChosenMode]);
+  useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_RATES, JSON.stringify(marketRates)); }, [marketRates, user, hasChosenMode]);
+  useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_CALC, JSON.stringify(calculatorData)); }, [calculatorData, user, hasChosenMode]);
+  useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_BUDGETS, JSON.stringify(budgets)); }, [budgets, user, hasChosenMode]);
+  useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_RECURRING, JSON.stringify(recurringTransactions)); }, [recurringTransactions, user, hasChosenMode]);
 
-  // 4. RECURRING TRANSACTIONS LOGIC (Runs on load)
+  // 4. RECURRING LOGIC
   useEffect(() => {
+      if (!hasChosenMode || isAccessDenied || authError) return;
+
       const today = new Date();
       const currentDay = today.getDate();
       const currentMonthStr = `${today.getFullYear()}-${today.getMonth() + 1}`;
@@ -164,7 +242,6 @@ const App: React.FC = () => {
           const lastProcessed = rule.lastProcessedDate ? new Date(rule.lastProcessedDate) : null;
           const lastProcessedMonthStr = lastProcessed ? `${lastProcessed.getFullYear()}-${lastProcessed.getMonth() + 1}` : '';
 
-          // If today is past the due day AND it hasn't been processed this month
           if (currentDay >= rule.dayOfMonth && lastProcessedMonthStr !== currentMonthStr) {
               newTransactions.push({
                   id: Date.now().toString() + Math.random(),
@@ -183,32 +260,28 @@ const App: React.FC = () => {
       });
 
       if (hasUpdates) {
-          // Add transactions
           if (user && db) {
               const batch = writeBatch(db);
               newTransactions.forEach(t => {
                   const { id, ...data } = t;
                   batch.set(doc(collection(db, 'users', user.id, 'transactions')), data);
               });
-              // Update recurring rules
               batch.set(doc(db, 'users', user.id, 'settings', 'config'), { recurring: updatedRecurring }, { merge: true });
               batch.commit();
-              // Local state updates happen via snapshot listeners
           } else {
               setTransactions(prev => [...prev, ...newTransactions]);
               setRecurringTransactions(updatedRecurring);
               alert(`Processed ${newTransactions.length} recurring transactions!`);
           }
       }
-  }, [recurringTransactions, user]); // Dependency on recurringTransactions might loop if not careful, but logic prevents double add
+  }, [recurringTransactions, user, hasChosenMode, isAccessDenied, authError]);
 
-  // 5. AI INSIGHTS & GAMIFICATION
+  // 5. INSIGHTS
   useEffect(() => {
-      // Calc totals
+      if (!hasChosenMode || isAccessDenied || authError) return;
       let income = 0, expense = 0;
       transactions.forEach(t => {
           let val = t.amount;
-          // Normalize currency
           if (t.currency === 'THB') val *= marketRates.THB;
           if (t.currency === 'USD') val *= marketRates.USD;
           if (t.currency === 'SGD') val *= marketRates.SGD;
@@ -216,39 +289,29 @@ const App: React.FC = () => {
           if (t.type === TransactionType.EXPENSE) expense += val;
       });
       const netWorth = income - expense;
-
-      // Update Badges
       const newBadges = [...badges];
       if (transactions.length > 0) newBadges.find(b => b.id === 'first_step')!.unlocked = true;
       if (netWorth > 0) newBadges.find(b => b.id === 'saver')!.unlocked = true;
       if (netWorth > 1000000) newBadges.find(b => b.id === 'gold_member')!.unlocked = true;
-      // Disciplined check would need budget logic
       setBadges(newBadges);
 
-      // AI Insights
       const insights = [];
       const today = new Date();
       const currentMonth = today.getMonth();
       const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-      
       const currMonthExp = transactions.filter(t => t.type === TransactionType.EXPENSE && new Date(t.date).getMonth() === currentMonth).reduce((acc, t) => acc + t.amount, 0);
       const prevMonthExp = transactions.filter(t => t.type === TransactionType.EXPENSE && new Date(t.date).getMonth() === prevMonth).reduce((acc, t) => acc + t.amount, 0);
 
       if (prevMonthExp > 0) {
-          if (currMonthExp > prevMonthExp * 1.2) {
-              insights.push(`⚠️ Spending Alert: You have spent 20% more than last month already.`);
-          } else if (currMonthExp < prevMonthExp * 0.8) {
-              insights.push(`🎉 Great job! Your spending is 20% lower than last month.`);
-          }
+          if (currMonthExp > prevMonthExp * 1.2) insights.push(`⚠️ Spending Alert: You have spent 20% more than last month.`);
+          else if (currMonthExp < prevMonthExp * 0.8) insights.push(`🎉 Great job! Your spending is 20% lower than last month.`);
       }
-      if (netWorth > 500000) insights.push(`💡 Wealth Tip: Consider investing your surplus 500k+ in Gold or High Interest savings.`);
-      
+      if (netWorth > 500000) insights.push(`💡 Wealth Tip: Consider investing your surplus 500k+ in Gold.`);
       setAiInsights(insights.length ? insights : ["Gathering more data for insights..."]);
+  }, [transactions, marketRates, hasChosenMode, isAccessDenied, authError]);
 
-  }, [transactions, marketRates]);
 
-
-  // --- ACTIONS ---
+  // ACTIONS
   const toggleTheme = () => {
     const newTheme = !isDarkMode;
     setIsDarkMode(newTheme);
@@ -256,31 +319,60 @@ const App: React.FC = () => {
     if (newTheme) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   };
-  
   useEffect(() => { if (isDarkMode) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark'); }, []);
 
   const handleLogin = async () => {
-    if (!auth) { alert("Firebase Configuration Missing"); return; }
-    try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Login failed."); }
+    if (!auth || !googleProvider) {
+        setAuthError({
+            title: "Firebase Configuration Missing",
+            message: "Please set up 'firebase.ts' with your API keys to enable Google Login."
+        });
+        return;
+    }
+    try { 
+        await signInWithPopup(auth, googleProvider); 
+    } 
+    catch (error: any) { 
+        console.error("Login Error:", error); 
+        if (error.code === 'auth/unauthorized-domain') {
+            setAuthError({
+                title: "Domain Not Authorized",
+                message: `The domain "${window.location.hostname}" is not authorized for Google Sign-In.\n\nPlease go to Firebase Console -> Authentication -> Settings -> Authorized Domains and add this domain.`
+            });
+        } else if (error.code === 'auth/configuration-not-found' || error.code === 'auth/api-key-not-valid') {
+            setAuthError({
+                title: "Configuration Error",
+                message: "Invalid Firebase Configuration. Please check your API Keys."
+            });
+        } else if (error.code !== 'auth/popup-closed-by-user') {
+            setAuthError({
+                title: "Login Failed",
+                message: error.message || "An unknown error occurred."
+            });
+        }
+    }
   };
 
-  const handleLogout = async () => { if (auth) { await signOut(auth); setActiveTab('dashboard'); window.location.reload(); } };
+  const handleGuestMode = () => { setHasChosenMode(true); localStorage.setItem(KEY_MODE_CHOSEN, 'true'); };
+  
+  const handleLogout = async () => { 
+      if (auth) { 
+          await signOut(auth);
+          // CRITICAL FIX: Clear localStorage choice to force Onboarding screen on next load/refresh
+          localStorage.removeItem(KEY_MODE_CHOSEN);
+          setHasChosenMode(false);
+          setActiveTab('dashboard'); 
+      } 
+  };
 
   const addTransaction = async (t: Transaction) => {
-      if (user && db) {
-          const { id, ...data } = t; 
-          await addDoc(collection(db, 'users', user.id, 'transactions'), data);
-      } else {
-          setTransactions(prev => [...prev, t]);
-      }
+      if (user && db) { const { id, ...data } = t; await addDoc(collection(db, 'users', user.id, 'transactions'), data); } 
+      else { setTransactions(prev => [...prev, t]); }
   };
-
   const deleteTransaction = async (id: string) => {
       if (user && db) { await deleteDoc(doc(db, 'users', user.id, 'transactions', id)); } 
       else { setTransactions(prev => prev.filter(item => item.id !== id)); }
   };
-
-  // Data Updates
   const updateRates = async (newRates: MarketRates) => {
       setMarketRates(newRates);
       if (user && db) await setDoc(doc(db, 'users', user.id, 'settings', 'config'), { rates: newRates }, { merge: true });
@@ -303,8 +395,6 @@ const App: React.FC = () => {
       setRecurringTransactions(updated);
       if (user && db) await setDoc(doc(db, 'users', user.id, 'settings', 'config'), { recurring: updated }, { merge: true });
   };
-
-  // Backup Actions
   const handleExportData = () => {
     const data: BackupData = { profile: user || { id: 'guest', name: 'Guest', createdAt: new Date().toISOString() }, transactions, rates: marketRates, calculator: calculatorData, budgets, recurring: recurringTransactions, version: '2.1' };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -316,7 +406,6 @@ const App: React.FC = () => {
     link.click();
     document.body.removeChild(link);
   };
-
   const handleImportData = async (file: File) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -344,6 +433,123 @@ const App: React.FC = () => {
     };
     reader.readAsText(file);
   };
+
+  // --- AUTH ERROR SCREEN ---
+  if (authError) {
+      return (
+          <div className={`flex flex-col items-center justify-center min-h-screen p-6 bg-gray-50 dark:bg-[#020617] transition-colors duration-300`}>
+              <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-2xl text-center max-w-md border border-red-200 dark:border-red-900">
+                  <div className="w-20 h-20 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                      <AlertTriangle size={40} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">{authError.title}</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-8 leading-relaxed whitespace-pre-wrap">
+                      {authError.message}
+                  </p>
+                  <button 
+                    onClick={() => setAuthError(null)}
+                    className="w-full py-3 bg-[#1E2A38] text-white rounded-xl font-bold shadow-lg hover:bg-black transition-all"
+                  >
+                    Dismiss & Try Again
+                  </button>
+              </div>
+          </div>
+      )
+  }
+
+  // --- ACCESS DENIED SCREEN ---
+  if (isAccessDenied) {
+      return (
+          <div className={`flex flex-col items-center justify-center min-h-screen p-6 bg-red-50 dark:bg-[#020617] transition-colors duration-300`}>
+              <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-2xl text-center max-w-md border border-red-200 dark:border-red-900">
+                  <div className="w-20 h-20 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                      <Lock size={40} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">Access Denied</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-8 leading-relaxed">
+                      Your Google account is not authorized to access this application. Please contact the administrator to whitelist your email.
+                  </p>
+                  <button 
+                    onClick={() => { setIsAccessDenied(false); window.location.reload(); }}
+                    className="w-full py-3 bg-[#1E2A38] text-white rounded-xl font-bold shadow-lg hover:bg-black transition-all"
+                  >
+                    Return to Home
+                  </button>
+              </div>
+          </div>
+      );
+  }
+
+  // --- CONDITIONAL RENDER: ONBOARDING SCREEN ---
+  if (!hasChosenMode && !user && !isAuthLoading) {
+      return (
+          <div className={`flex flex-col items-center justify-center min-h-screen p-6 bg-gray-50 dark:bg-[#020617] transition-colors duration-300 ${isDarkMode ? 'dark' : ''}`}>
+              <div className="absolute top-6 right-6">
+                  <button onClick={toggleTheme} className="p-3 rounded-xl bg-white dark:bg-[#1E293B] text-gray-500 dark:text-gray-400 shadow-md hover:text-[#D4AF37] transition-all">
+                    {isDarkMode ? <Moon size={20}/> : <Sun size={20}/>}
+                  </button>
+              </div>
+
+              <div className="max-w-4xl w-full text-center space-y-8 animate-fade-in">
+                  <div className="flex flex-col items-center justify-center gap-4">
+                      <div className="w-24 h-24 relative">
+                          <div className="absolute inset-0 bg-[#D4AF37] rounded-full blur-2xl opacity-30 animate-pulse"></div>
+                          <GoldCoinLogo className="w-full h-full drop-shadow-2xl relative z-10" />
+                      </div>
+                      <div>
+                          <h1 className="text-4xl md:text-5xl font-bold bg-gold-text bg-clip-text text-transparent tracking-tight pb-1">ShweBudget</h1>
+                          <p className="text-gray-500 dark:text-gray-400 font-medium mt-2 tracking-wide">Premium Financial Planning for Myanmar</p>
+                      </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-6 mt-12">
+                      {/* Guest Card */}
+                      <div className="group bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-xl border border-transparent hover:border-[#D4AF37]/30 transition-all hover:-translate-y-1 cursor-pointer relative overflow-hidden" onClick={handleGuestMode}>
+                          <div className="absolute top-0 left-0 w-full h-1 bg-gray-200 dark:bg-gray-700 group-hover:bg-[#D4AF37] transition-colors"></div>
+                          <div className="w-14 h-14 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-6 text-gray-500 dark:text-gray-400 group-hover:text-[#D4AF37] transition-colors">
+                              <Smartphone size={32} />
+                          </div>
+                          <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Continue as Guest</h3>
+                          <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-6">
+                              Perfect for trying out the app instantly. Your data is stored securely on <strong>this device only</strong>.
+                          </p>
+                          <div className="flex items-center text-sm font-bold text-[#D4AF37] gap-2">
+                              Start Now <ArrowUpCircle size={16} className="rotate-90"/>
+                          </div>
+                      </div>
+
+                      {/* Login Card */}
+                      <div className="group bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-xl border border-transparent hover:border-blue-500/30 transition-all hover:-translate-y-1 cursor-pointer relative overflow-hidden" onClick={handleLogin}>
+                          <div className="absolute top-0 left-0 w-full h-1 bg-blue-500/50 group-hover:bg-blue-500 transition-colors"></div>
+                          <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center mb-6 text-blue-500 transition-colors">
+                              <Cloud size={32} />
+                          </div>
+                          <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Cloud Sync</h3>
+                          <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-4">
+                              Best for long-term use. Access your finance data from <strong>any device</strong>. <span className="text-red-400 font-bold">*Admin Approval Required</span>
+                          </p>
+                          <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 text-left">
+                              <p className="text-[10px] uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center gap-1">
+                                  <Phone size={10} /> For Premium Access (Whitelist)
+                              </p>
+                              <p className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                                  Contact Viber: (+66) 80 563 1811
+                              </p>
+                          </div>
+                          <button className="w-full flex items-center justify-center gap-3 py-3 bg-white border border-gray-200 dark:border-gray-700 rounded-xl font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors shadow-sm">
+                              <GoogleLogo className="w-5 h-5" /> Sign in with Google
+                          </button>
+                      </div>
+                  </div>
+                  
+                  <p className="text-xs text-gray-400 dark:text-gray-600 pt-8">
+                      By continuing, you acknowledge that this is a personal financial tool. <br/>
+                      Powered by <strong>PrimeNova Digital Solution</strong>.
+                  </p>
+              </div>
+          </div>
+      );
+  }
 
   // Summary
   const calculateSummary = () => {
@@ -384,6 +590,60 @@ const App: React.FC = () => {
   const renderContent = () => {
     if (isAuthLoading && auth) return <div className="h-full flex items-center justify-center text-[#D4AF37] animate-pulse">Connecting...</div>;
 
+    // --- Feature Locking for Guest Mode ---
+    // If user is NOT logged in (Guest) AND trying to access 'calculator' or 'tools'
+    if (!user && (activeTab === 'calculator' || activeTab === 'tools')) {
+        return (
+            <div className="relative w-full h-full flex items-center justify-center">
+                {/* Blurred Content Background - Absolute to fill parent */}
+                <div className="absolute inset-0 blur-md pointer-events-none select-none opacity-40 overflow-hidden">
+                    {activeTab === 'calculator' ? (
+                        // Dummy data or static render to show "something" behind the blur without processing real data
+                        <Calculator rates={marketRates} data={calculatorData} onUpdate={()=>{}} />
+                    ) : (
+                        <Tools rates={marketRates} updateRates={()=>{}} onExportData={()=>{}} onImportData={()=>{}} />
+                    )}
+                </div>
+
+                {/* Lock Overlay */}
+                <div className="relative z-20 p-8 bg-white/90 dark:bg-[#1E293B]/90 backdrop-blur-md rounded-3xl shadow-2xl text-center border border-[#D4AF37]/30 max-w-lg mx-4">
+                    <div className="w-20 h-20 bg-white dark:bg-[#0F172A] rounded-full flex items-center justify-center shadow-xl mb-6 border border-[#D4AF37]/30 mx-auto">
+                        <Lock size={40} className="text-[#D4AF37]" />
+                    </div>
+                    <h2 className="text-2xl md:text-3xl font-bold text-[#1E2A38] dark:text-white mb-4">
+                        Premium Feature Locked
+                    </h2>
+                    <p className="text-gray-600 dark:text-gray-300 mb-8 text-base leading-relaxed">
+                        The <strong>{activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'}</strong> is a premium feature available exclusively for our cloud-synced members.
+                    </p>
+                    
+                    <div className="mb-8 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
+                        <p className="text-xs uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center justify-center gap-1">
+                            <Phone size={12} /> To Purchase Premium Service
+                        </p>
+                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                            Contact Viber: (+66) 80 563 1811
+                        </p>
+                    </div>
+
+                    <button 
+                        onClick={handleLogin}
+                        className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-white text-[#1E2A38] rounded-xl font-bold shadow-xl hover:scale-105 transition-transform border border-gray-200 mb-6"
+                    >
+                        <GoogleLogo className="w-6 h-6" />
+                        <span className="text-lg">Unlock with Google</span>
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('dashboard')}
+                        className="text-sm text-gray-500 dark:text-gray-400 hover:text-[#D4AF37] underline font-medium"
+                    >
+                        Return to Dashboard
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     switch (activeTab) {
       case 'dashboard':
         return (
@@ -406,7 +666,7 @@ const App: React.FC = () => {
                    {/* AI Insight Box */}
                    <div className="hidden md:block w-1/3 p-4 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm flex-shrink-0">
                       <p className="text-[#D4AF37] text-xs font-bold uppercase mb-2 flex items-center gap-1"><Zap size={12}/> AI Insight</p>
-                      <p className="text-sm text-gray-300 italic">"{aiInsights[0]}"</p>
+                      <p className="text-sm text-gray-300 italic">"{aiInsights.length > 0 ? aiInsights[0] : 'Gathering insights...'}"</p>
                    </div>
                 </div>
 
@@ -415,7 +675,7 @@ const App: React.FC = () => {
                 <DashboardCard title="Total Expenses" amount={summary.expense} icon={ArrowDownCircle} colorClass="text-red-600 dark:text-red-400" bgClass="bg-red-50 dark:bg-red-900/20" />
                 
                 {/* Badges / Gamification Card */}
-                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('tools')}>
+                <div className="bg-white dark:bg-[#0F172A] p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col justify-center group transition-all" onClick={() => setActiveTab('analytics')}>
                     <div className="flex justify-between items-center mb-4">
                         <p className="text-sm font-bold text-gray-700 dark:text-gray-200">Your Badges</p>
                         <Award size={18} className="text-[#D4AF37]" />

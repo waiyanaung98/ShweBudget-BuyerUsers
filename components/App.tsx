@@ -359,6 +359,7 @@ const App: React.FC = () => {
   const handleLogout = async () => { 
       if (auth) { 
           await signOut(auth);
+          // Important: Reset chosen mode to force onboarding screen on next view
           localStorage.removeItem(KEY_MODE_CHOSEN);
           setHasChosenMode(false);
           setUser(null);
@@ -490,7 +491,7 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Lock Overlay */}
-                <div className="relative z-20 p-8 bg-white/90 dark:bg-[#1E293B]/90 backdrop-blur-md rounded-3xl shadow-2xl text-center border border-[#D4AF37]/30 max-w-md mx-4 animate-fade-in">
+                <div className="relative z-20 p-8 bg-white/95 dark:bg-[#1E293B]/95 backdrop-blur-xl rounded-3xl shadow-2xl text-center border border-[#D4AF37]/30 max-w-md mx-4 animate-fade-in">
                     <div className="w-16 h-16 bg-white dark:bg-[#0F172A] rounded-full flex items-center justify-center shadow-xl mb-4 border border-[#D4AF37]/30 mx-auto">
                         <Lock size={32} className="text-[#D4AF37]" />
                     </div>
@@ -501,7 +502,7 @@ const App: React.FC = () => {
                         The <strong>{activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'}</strong> is a premium feature available exclusively for our cloud-synced members.
                     </p>
                     
-                    <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl border border-blue-100 dark:border-blue-800">
+                    <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl border border-blue-100 dark:border-blue-800 shadow-inner">
                         <p className="text-[10px] uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center justify-center gap-1">
                             <Phone size={10} /> For Premium Access
                         </p>
@@ -512,7 +513,7 @@ const App: React.FC = () => {
 
                     <button 
                         onClick={handleLogin}
-                        className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white text-[#1E2A38] rounded-xl font-bold shadow-xl hover:scale-105 transition-transform border border-gray-200 mb-4"
+                        className="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-white border border-gray-200 rounded-xl font-bold shadow-lg hover:scale-[1.02] transition-all hover:shadow-xl mb-4 text-gray-700"
                     >
                         <GoogleLogo className="w-5 h-5" />
                         <span>Unlock with Google</span>
@@ -693,14 +694,16 @@ const App: React.FC = () => {
                           <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-4">
                               Best for long-term use. Access your finance data from <strong>any device</strong>. <span className="text-red-400 font-bold">*Admin Approval Required</span>
                           </p>
+                          
                           <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 text-left">
                               <p className="text-[10px] uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center gap-1">
-                                  <Phone size={10} /> For Premium Access (Whitelist)
+                                  <Phone size={10} /> For Premium Access
                               </p>
                               <p className="text-xs font-bold text-gray-700 dark:text-gray-300">
                                   Contact Viber: (+66) 80 563 1811
                               </p>
                           </div>
+
                           <button className="w-full flex items-center justify-center gap-3 py-3 bg-white border border-gray-200 dark:border-gray-700 rounded-xl font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors shadow-sm">
                               <GoogleLogo className="w-5 h-5" /> Sign in with Google
                           </button>

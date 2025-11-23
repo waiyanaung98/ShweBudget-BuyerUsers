@@ -1,15 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
-import Layout from './components/Layout';
-import Tracker from './components/Tracker';
-import Calculator from './components/Calculator';
-import Analytics from './components/Analytics';
-import Tools from './components/Tools';
-import { Transaction, TransactionType, MarketRates, CalculatorData, UserProfile, BackupData, Budget, RecurringTransaction, Badge } from './types';
+import Layout from './Layout';
+import Tracker from './Tracker';
+import Calculator from './Calculator';
+import Analytics from './Analytics';
+import Tools from './Tools';
+import { Transaction, TransactionType, MarketRates, CalculatorData, UserProfile, BackupData, Budget, RecurringTransaction, Badge } from '../types';
 import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock, AlertTriangle, Phone } from 'lucide-react';
 
 // Firebase Imports
-import { auth, googleProvider, db } from './firebase';
+import { auth, googleProvider, db } from '../firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, setDoc, getDoc, onSnapshot, collection, addDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
@@ -359,7 +359,7 @@ const App: React.FC = () => {
   const handleLogout = async () => { 
       if (auth) { 
           await signOut(auth);
-          // Important: Reset chosen mode to force onboarding screen on next view
+          // Clear mode choice to force Onboarding Screen
           localStorage.removeItem(KEY_MODE_CHOSEN);
           setHasChosenMode(false);
           setUser(null);

@@ -6,7 +6,7 @@ import Calculator from './components/Calculator';
 import Analytics from './components/Analytics';
 import Tools from './components/Tools';
 import { Transaction, TransactionType, MarketRates, CalculatorData, UserProfile, BackupData, Budget, RecurringTransaction, Badge } from './types';
-import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock, AlertTriangle } from 'lucide-react';
+import { Wallet, ArrowUpCircle, ArrowDownCircle, Settings, Award, Zap, TrendingUp, TrendingDown, ShieldCheck, Cloud, User, Smartphone, CheckCircle, LogIn, Moon, Sun, Lock, AlertTriangle, Phone } from 'lucide-react';
 
 // Firebase Imports
 import { auth, googleProvider, db } from './firebase';
@@ -100,6 +100,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAccessDenied, setIsAccessDenied] = useState(false);
+  const [authError, setAuthError] = useState<{title: string, message: string} | null>(null);
   
   // --- ONBOARDING STATE ---
   // Check if user has already chosen a mode or is logged in
@@ -158,6 +159,7 @@ const App: React.FC = () => {
             }
         } catch (error) {
             console.error("Whitelist Check Error:", error);
+            // If there's an error reading the whitelist (e.g., permissions), assume access denied for safety
             setIsAccessDenied(true);
             await signOut(auth);
         }
@@ -166,6 +168,8 @@ const App: React.FC = () => {
       } else {
         setUser(null);
         setIsAuthLoading(false);
+        // Reset chosen mode if logged out to force onboarding again
+        // setHasChosenMode(false); // Handled in handleLogout usually, but good to ensure consistency if session expires
       }
     });
     return () => unsubscribe();
@@ -173,7 +177,7 @@ const App: React.FC = () => {
 
   // 2. Data Loading Logic
   useEffect(() => {
-    if (isAuthLoading || isAccessDenied) return;
+    if (isAuthLoading || isAccessDenied || authError) return;
 
     if (user && db) {
         // Cloud Listeners
@@ -216,7 +220,7 @@ const App: React.FC = () => {
         setBudgets(savedB ? JSON.parse(savedB) : []);
         setRecurringTransactions(savedRT ? JSON.parse(savedRT) : []);
     }
-  }, [user, isAuthLoading, hasChosenMode, isAccessDenied]);
+  }, [user, isAuthLoading, hasChosenMode, isAccessDenied, authError]);
 
   // 3. Save Data (Guest Mode)
   useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_TRANSACTIONS, JSON.stringify(transactions)); }, [transactions, user, hasChosenMode]);
@@ -225,9 +229,9 @@ const App: React.FC = () => {
   useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_BUDGETS, JSON.stringify(budgets)); }, [budgets, user, hasChosenMode]);
   useEffect(() => { if (!user && hasChosenMode) localStorage.setItem(KEY_GUEST_RECURRING, JSON.stringify(recurringTransactions)); }, [recurringTransactions, user, hasChosenMode]);
 
-  // 4. RECURRING TRANSACTIONS LOGIC (Runs on load)
+  // 4. RECURRING LOGIC
   useEffect(() => {
-      if (!hasChosenMode || isAccessDenied) return; // Don't run until mode is chosen
+      if (!hasChosenMode || isAccessDenied || authError) return;
 
       const today = new Date();
       const currentDay = today.getDate();
@@ -241,7 +245,6 @@ const App: React.FC = () => {
           const lastProcessed = rule.lastProcessedDate ? new Date(rule.lastProcessedDate) : null;
           const lastProcessedMonthStr = lastProcessed ? `${lastProcessed.getFullYear()}-${lastProcessed.getMonth() + 1}` : '';
 
-          // If today is past the due day AND it hasn't been processed this month
           if (currentDay >= rule.dayOfMonth && lastProcessedMonthStr !== currentMonthStr) {
               newTransactions.push({
                   id: Date.now().toString() + Math.random(),
@@ -260,34 +263,28 @@ const App: React.FC = () => {
       });
 
       if (hasUpdates) {
-          // Add transactions
           if (user && db) {
               const batch = writeBatch(db);
               newTransactions.forEach(t => {
                   const { id, ...data } = t;
                   batch.set(doc(collection(db, 'users', user.id, 'transactions')), data);
               });
-              // Update recurring rules
               batch.set(doc(db, 'users', user.id, 'settings', 'config'), { recurring: updatedRecurring }, { merge: true });
               batch.commit();
-              // Local state updates happen via snapshot listeners
           } else {
               setTransactions(prev => [...prev, ...newTransactions]);
               setRecurringTransactions(updatedRecurring);
               alert(`Processed ${newTransactions.length} recurring transactions!`);
           }
       }
-  }, [recurringTransactions, user, hasChosenMode, isAccessDenied]);
+  }, [recurringTransactions, user, hasChosenMode, isAccessDenied, authError]);
 
-  // 5. AI INSIGHTS & GAMIFICATION
+  // 5. INSIGHTS
   useEffect(() => {
-      if (!hasChosenMode || isAccessDenied) return;
-
-      // Calc totals
+      if (!hasChosenMode || isAccessDenied || authError) return;
       let income = 0, expense = 0;
       transactions.forEach(t => {
           let val = t.amount;
-          // Normalize currency
           if (t.currency === 'THB') val *= marketRates.THB;
           if (t.currency === 'USD') val *= marketRates.USD;
           if (t.currency === 'SGD') val *= marketRates.SGD;
@@ -295,39 +292,29 @@ const App: React.FC = () => {
           if (t.type === TransactionType.EXPENSE) expense += val;
       });
       const netWorth = income - expense;
-
-      // Update Badges
       const newBadges = [...badges];
       if (transactions.length > 0) newBadges.find(b => b.id === 'first_step')!.unlocked = true;
       if (netWorth > 0) newBadges.find(b => b.id === 'saver')!.unlocked = true;
       if (netWorth > 1000000) newBadges.find(b => b.id === 'gold_member')!.unlocked = true;
-      // Disciplined check would need budget logic
       setBadges(newBadges);
 
-      // AI Insights
       const insights = [];
       const today = new Date();
       const currentMonth = today.getMonth();
       const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-      
       const currMonthExp = transactions.filter(t => t.type === TransactionType.EXPENSE && new Date(t.date).getMonth() === currentMonth).reduce((acc, t) => acc + t.amount, 0);
       const prevMonthExp = transactions.filter(t => t.type === TransactionType.EXPENSE && new Date(t.date).getMonth() === prevMonth).reduce((acc, t) => acc + t.amount, 0);
 
       if (prevMonthExp > 0) {
-          if (currMonthExp > prevMonthExp * 1.2) {
-              insights.push(`⚠️ Spending Alert: You have spent 20% more than last month already.`);
-          } else if (currMonthExp < prevMonthExp * 0.8) {
-              insights.push(`🎉 Great job! Your spending is 20% lower than last month.`);
-          }
+          if (currMonthExp > prevMonthExp * 1.2) insights.push(`⚠️ Spending Alert: You have spent 20% more than last month already.`);
+          else if (currMonthExp < prevMonthExp * 0.8) insights.push(`🎉 Great job! Your spending is 20% lower than last month.`);
       }
-      if (netWorth > 500000) insights.push(`💡 Wealth Tip: Consider investing your surplus 500k+ in Gold or High Interest savings.`);
-      
+      if (netWorth > 500000) insights.push(`💡 Wealth Tip: Consider investing your surplus 500k+ in Gold.`);
       setAiInsights(insights.length ? insights : ["Gathering more data for insights..."]);
+  }, [transactions, marketRates, hasChosenMode, isAccessDenied, authError]);
 
-  }, [transactions, marketRates, hasChosenMode, isAccessDenied]);
 
-
-  // --- ACTIONS ---
+  // ACTIONS
   const toggleTheme = () => {
     const newTheme = !isDarkMode;
     setIsDarkMode(newTheme);
@@ -335,60 +322,61 @@ const App: React.FC = () => {
     if (newTheme) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   };
-  
   useEffect(() => { if (isDarkMode) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark'); }, []);
 
   const handleLogin = async () => {
     if (!auth || !googleProvider) {
-        alert("Firebase Configuration Missing.\nPlease set up 'firebase.ts' with your API keys to enable Google Login.");
+        setAuthError({
+            title: "Firebase Configuration Missing",
+            message: "Please set up 'firebase.ts' with your API keys to enable Google Login."
+        });
         return;
     }
-    try {
-      await signInWithPopup(auth, googleProvider);
-      // Auth state listener will handle the rest (setting user and chosen mode)
-    } catch (error: any) {
-      console.error("Login Error:", error);
-      if (error.code === 'auth/configuration-not-found' || error.code === 'auth/api-key-not-valid') {
-          alert("Login Failed: Invalid Firebase Configuration. Please check your API Keys.");
-      } else if (error.code === 'auth/unauthorized-domain') {
-          alert("Login Failed: Domain not authorized.\n\nPlease go to Firebase Console -> Authentication -> Settings -> Authorized Domains and add this domain.");
-      } else if (error.code !== 'auth/popup-closed-by-user') {
-          alert("Login failed. Check console for details.");
-      }
+    try { 
+        await signInWithPopup(auth, googleProvider); 
+    } 
+    catch (error: any) { 
+        console.error("Login Error:", error); 
+        if (error.code === 'auth/unauthorized-domain') {
+            setAuthError({
+                title: "Domain Not Authorized",
+                message: `The domain "${window.location.hostname}" is not authorized for Google Sign-In.\n\nPlease go to Firebase Console -> Authentication -> Settings -> Authorized Domains and add this domain.`
+            });
+        } else if (error.code === 'auth/configuration-not-found' || error.code === 'auth/api-key-not-valid') {
+            setAuthError({
+                title: "Configuration Error",
+                message: "Invalid Firebase Configuration. Please check your API Keys."
+            });
+        } else if (error.code !== 'auth/popup-closed-by-user') {
+            setAuthError({
+                title: "Login Failed",
+                message: error.message || "An unknown error occurred."
+            });
+        }
     }
   };
 
-  const handleGuestMode = () => {
-      setHasChosenMode(true);
-      localStorage.setItem(KEY_MODE_CHOSEN, 'true');
-  };
-
+  const handleGuestMode = () => { setHasChosenMode(true); localStorage.setItem(KEY_MODE_CHOSEN, 'true'); };
+  
   const handleLogout = async () => { 
       if (auth) { 
-          await signOut(auth); 
-          setActiveTab('dashboard'); 
-          // Optionally reset chosen mode on logout to show onboarding again?
-          // For now, let's keep it simple and just reload, which will check localstorage.
-          // If we want to force onboarding again: localStorage.removeItem(KEY_MODE_CHOSEN);
-          window.location.reload(); 
+          await signOut(auth);
+          // Clear mode choice to force Onboarding Screen
+          localStorage.removeItem(KEY_MODE_CHOSEN);
+          setHasChosenMode(false);
+          setUser(null);
+          setActiveTab('dashboard');
       } 
   };
 
   const addTransaction = async (t: Transaction) => {
-      if (user && db) {
-          const { id, ...data } = t; 
-          await addDoc(collection(db, 'users', user.id, 'transactions'), data);
-      } else {
-          setTransactions(prev => [...prev, t]);
-      }
+      if (user && db) { const { id, ...data } = t; await addDoc(collection(db, 'users', user.id, 'transactions'), data); } 
+      else { setTransactions(prev => [...prev, t]); }
   };
-
   const deleteTransaction = async (id: string) => {
       if (user && db) { await deleteDoc(doc(db, 'users', user.id, 'transactions', id)); } 
       else { setTransactions(prev => prev.filter(item => item.id !== id)); }
   };
-
-  // Data Updates
   const updateRates = async (newRates: MarketRates) => {
       setMarketRates(newRates);
       if (user && db) await setDoc(doc(db, 'users', user.id, 'settings', 'config'), { rates: newRates }, { merge: true });
@@ -411,8 +399,6 @@ const App: React.FC = () => {
       setRecurringTransactions(updated);
       if (user && db) await setDoc(doc(db, 'users', user.id, 'settings', 'config'), { recurring: updated }, { merge: true });
   };
-
-  // Backup Actions
   const handleExportData = () => {
     const data: BackupData = { profile: user || { id: 'guest', name: 'Guest', createdAt: new Date().toISOString() }, transactions, rates: marketRates, calculator: calculatorData, budgets, recurring: recurringTransactions, version: '2.1' };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -424,7 +410,6 @@ const App: React.FC = () => {
     link.click();
     document.body.removeChild(link);
   };
-
   const handleImportData = async (file: File) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -496,37 +481,48 @@ const App: React.FC = () => {
     // If user is NOT logged in (Guest) AND trying to access 'calculator' or 'tools'
     if (!user && (activeTab === 'calculator' || activeTab === 'tools')) {
         return (
-            <div className="relative w-full">
-                {/* Blurred Content */}
-                <div className="blur-md pointer-events-none select-none opacity-50">
+            <div className="relative w-full h-full flex items-center justify-center">
+                {/* Blurred Content Background - Absolute to fill parent */}
+                <div className="absolute inset-0 blur-md pointer-events-none select-none opacity-40 overflow-hidden">
                     {activeTab === 'calculator' ? (
-                        <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />
+                        // Dummy data or static render to show "something" behind the blur without processing real data
+                        <Calculator rates={marketRates} data={calculatorData} onUpdate={()=>{}} />
                     ) : (
-                        <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />
+                        <Tools rates={marketRates} updateRates={()=>{}} onExportData={()=>{}} onImportData={()=>{}} />
                     )}
                 </div>
 
                 {/* Lock Overlay */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center z-20 p-6 text-center">
-                    <div className="w-20 h-20 bg-white dark:bg-[#1E293B] rounded-full flex items-center justify-center shadow-2xl mb-6 border border-[#D4AF37]/30">
-                        <Lock size={40} className="text-[#D4AF37]" />
+                <div className="relative z-20 p-8 bg-white/95 dark:bg-[#1E293B]/95 backdrop-blur-xl rounded-3xl shadow-2xl text-center border border-[#D4AF37]/30 max-w-md mx-4 animate-fade-in">
+                    <div className="w-16 h-16 bg-white dark:bg-[#0F172A] rounded-full flex items-center justify-center shadow-xl mb-4 border border-[#D4AF37]/30 mx-auto">
+                        <Lock size={32} className="text-[#D4AF37]" />
                     </div>
-                    <h2 className="text-2xl md:text-3xl font-bold text-[#1E2A38] dark:text-white mb-3">
+                    <h2 className="text-2xl font-bold text-[#1E2A38] dark:text-white mb-2">
                         Premium Feature Locked
                     </h2>
-                    <p className="text-gray-600 dark:text-gray-300 max-w-md mb-8 text-lg leading-relaxed">
-                        The {activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'} is a premium feature available exclusively for our cloud-synced members.
+                    <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm leading-relaxed">
+                        The <strong>{activeTab === 'calculator' ? 'Financial Calculator' : 'Tools & Backup'}</strong> is a premium feature available exclusively for our cloud-synced members.
                     </p>
+                    
+                    <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl border border-blue-100 dark:border-blue-800 shadow-inner">
+                        <p className="text-[10px] uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center justify-center gap-1">
+                            <Phone size={10} /> For Premium Access
+                        </p>
+                        <p className="text-sm font-bold text-gray-800 dark:text-gray-200">
+                            Contact Viber: (+66) 80 563 1811
+                        </p>
+                    </div>
+
                     <button 
                         onClick={handleLogin}
-                        className="flex items-center gap-3 px-8 py-4 bg-white text-[#1E2A38] rounded-xl font-bold shadow-xl hover:scale-105 transition-transform border border-gray-200"
+                        className="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-white border border-gray-200 rounded-xl font-bold shadow-lg hover:scale-[1.02] transition-all hover:shadow-xl mb-4 text-gray-700"
                     >
-                        <GoogleLogo className="w-6 h-6" />
-                        <span className="text-lg">Unlock with Google</span>
+                        <GoogleLogo className="w-5 h-5" />
+                        <span>Unlock with Google</span>
                     </button>
                     <button 
                         onClick={() => setActiveTab('dashboard')}
-                        className="mt-6 text-sm text-gray-500 dark:text-gray-400 hover:text-[#D4AF37] underline"
+                        className="text-xs text-gray-500 dark:text-gray-400 hover:text-[#D4AF37] underline font-medium"
                     >
                         Return to Dashboard
                     </button>
@@ -597,16 +593,37 @@ const App: React.FC = () => {
             recurringTransactions={recurringTransactions} addRecurring={addRecurring} deleteRecurring={deleteRecurring}
         />;
       case 'calculator':
-        // If authenticated, render normally
         return <Calculator rates={marketRates} data={calculatorData} onUpdate={updateCalculatorData} />;
       case 'analytics':
         return <Analytics transactions={transactions} rates={marketRates} budgets={budgets} updateBudgets={updateBudgets} />;
       case 'tools':
-        // If authenticated, render normally
         return <Tools rates={marketRates} updateRates={updateRates} onExportData={handleExportData} onImportData={handleImportData} />;
       default: return <div>Not Found</div>;
     }
   };
+
+  // --- AUTH ERROR SCREEN ---
+  if (authError) {
+      return (
+          <div className={`flex flex-col items-center justify-center min-h-screen p-6 bg-gray-50 dark:bg-[#020617] transition-colors duration-300`}>
+              <div className="bg-white dark:bg-[#0F172A] p-8 rounded-3xl shadow-2xl text-center max-w-md border border-red-200 dark:border-red-900">
+                  <div className="w-20 h-20 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                      <AlertTriangle size={40} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">{authError.title}</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-8 leading-relaxed whitespace-pre-wrap">
+                      {authError.message}
+                  </p>
+                  <button 
+                    onClick={() => setAuthError(null)}
+                    className="w-full py-3 bg-[#1E2A38] text-white rounded-xl font-bold shadow-lg hover:bg-black transition-all"
+                  >
+                    Dismiss & Try Again
+                  </button>
+              </div>
+          </div>
+      )
+  }
 
   // --- ACCESS DENIED SCREEN ---
   if (isAccessDenied) {
@@ -676,9 +693,19 @@ const App: React.FC = () => {
                               <Cloud size={32} />
                           </div>
                           <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Cloud Sync</h3>
-                          <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-6">
+                          <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-4">
                               Best for long-term use. Access your finance data from <strong>any device</strong>. <span className="text-red-400 font-bold">*Admin Approval Required</span>
                           </p>
+                          
+                          <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 text-left">
+                              <p className="text-[10px] uppercase font-bold text-blue-500 dark:text-blue-400 mb-1 flex items-center gap-1">
+                                  <Phone size={10} /> For Premium Access
+                              </p>
+                              <p className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                                  Contact Viber: (+66) 80 563 1811
+                              </p>
+                          </div>
+
                           <button className="w-full flex items-center justify-center gap-3 py-3 bg-white border border-gray-200 dark:border-gray-700 rounded-xl font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors shadow-sm">
                               <GoogleLogo className="w-5 h-5" /> Sign in with Google
                           </button>
